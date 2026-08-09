@@ -1,0 +1,9 @@
+streamlit
+requests
+urllib3
+fpdf
+beautifulsoup4
+pandas
+plotly
+numpy
+openpyxl
