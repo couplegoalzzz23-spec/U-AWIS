@@ -1,7 +1,7 @@
 streamlit
 requests
 urllib3
-fpdf
+fpdf2
 beautifulsoup4
 pandas
 plotly
