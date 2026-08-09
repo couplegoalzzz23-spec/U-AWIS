@@ -1,298 +1,248 @@
+"""
+app.py — U-AWIS (Unified Aviation Weather Information System)
+================================================================
+Entry point / router Streamlit yang MENGGABUNGKAN tiga dashboard mandiri:
+  - acs_dashboard.py        (ACS Climatology Statistics)
+  - meteogram_dashboard.py  (Meteogram Master Dashboard)
+  - metar_dashboard.py      (METAR / TAF Tactical Ops)
+
+PENTING — PRINSIP DESAIN:
+Ketiga file di atas TIDAK disentuh, diedit, atau di-refactor sedikit pun.
+File ini hanya berperan sebagai "bingkai" (shell): landing page terpadu,
+navigasi atas, branding U-AWIS, dan tema gelap/terang untuk bagian yang
+dibangun sendiri di file ini. Setiap dashboard tetap berjalan dengan kode,
+caching, dan tampilan aslinya 100% utuh — dieksekusi oleh Streamlit sebagai
+"page" lewat st.navigation()/st.Page(), mekanisme resmi Streamlit untuk
+multipage app (bukan import module), sehingga st.set_page_config() dan
+seluruh logika di masing-masing file tetap berfungsi persis seperti saat
+dijalankan sendiri-sendiri.
+
+Struktur repo yang diasumsikan (flat, sesuai repo U-AWIS kalian):
+    app.py
+    acs_dashboard.py
+    meteogram_dashboard.py
+    metar_dashboard.py
+    *.xlsx (semua file data, ada di root — TIDAK perlu folder data/)
+    requirements.txt
+"""
+
 import streamlit as st
 
-# =====================================================================
-# 1. BLACK-BOX ISOLATION MONKEY-PATCH (ANTI-CRASH LOGIC)
-# Mencegah error duplikasi st.set_page_config() dari sub-halaman
-# =====================================================================
-if not hasattr(st, '_original_set_page_config'):
-    st._original_set_page_config = st.set_page_config
-    
-    def robust_set_page_config(*args, **kwargs):
-        if not st.session_state.get('_page_config_initialized', False):
-            st.session_state['_page_config_initialized'] = True
-            try:
-                st._original_set_page_config(*args, **kwargs)
-            except Exception:
-                pass
-        else:
-            pass
-
-    st.set_page_config = robust_set_page_config
-
-# Set konfigurasi inisial pertama kali secara aman sebelum router berjalan
+# ============================================================
+# 1) KONFIGURASI DASAR APLIKASI
+#    Harus jadi perintah Streamlit PERTAMA di file ini.
+#    Streamlit modern (st.navigation/st.Page) mengizinkan setiap
+#    halaman/page memanggil st.set_page_config() miliknya sendiri
+#    untuk MENIMPA (override) konfigurasi default ini — sehingga
+#    acs_dashboard.py, meteogram_dashboard.py, dan metar_dashboard.py
+#    tetap bisa punya judul tab & ikon masing-masing tanpa error.
+# ============================================================
 st.set_page_config(
-    page_title="U-AWIS | Unified Aviation Weather",
-    page_icon="✈️",
+    page_title="U-AWIS | Unified Aviation Weather Information System",
+    page_icon="🛡️",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# =====================================================================
-# 2. CONTROLLER THEME ENGINE (POJOK KANAN ATAS)
-# Solusi agar tidak ganda di Sidebar & mematuhi instruksi pojok kanan
-# =====================================================================
-if 'app_theme' not in st.session_state:
-    st.session_state.app_theme = 'Dark Mode'
+# ============================================================
+# 2) STATE & TEMA SHELL (Gelap/Terang)
+#    Tema ini HANYA berlaku untuk elemen yang dirender oleh file
+#    ini sendiri (banner atas, tag sidebar, dan halaman Beranda).
+#    Tidak pernah menyentuh selector global (.stApp, body,
+#    .block-container), sehingga tidak mungkin mengubah tampilan
+#    asli ketiga dashboard yang sudah punya tema sendiri.
+# ============================================================
+if "uawis_dark" not in st.session_state:
+    st.session_state.uawis_dark = True  # default: tema gelap ala ruang ops
 
-# Render pemilih mode tampilan di ujung kanan atas Main Area
-top_col1, top_col2 = st.columns([8.5, 1.5])
-with top_col2:
-    st.session_state.app_theme = st.selectbox(
-        "Tema Sistem",
-        options=["Dark Mode", "Light Mode"],
-        index=0 if st.session_state.app_theme == "Dark Mode" else 1,
-        label_visibility="collapsed"
+THEME = {
+    True: dict(   # ---- Dark Mode: navy gelap lembut, bukan hitam pekat ----
+        bg2="#141B2C", card="#161F33", border="#283552",
+        text="#E9EDF6", muted="#95A3C2", accent="#D9AE3A", accent2="#3D7AB5",
+        shadow="0 10px 28px rgba(0,0,0,0.40)",
+    ),
+    False: dict(  # ---- Light Mode: putih gading lembut, bukan putih polos ----
+        bg2="#FFFFFF", card="#FFFFFF", border="#DCE3EC",
+        text="#132140", muted="#54627C", accent="#B3860B", accent2="#1B4965",
+        shadow="0 8px 20px rgba(19,33,64,0.10)",
+    ),
+}
+
+# ============================================================
+# 3) DEFINISI HALAMAN (Page) — merujuk LANGSUNG ke file asli.
+#    Path relatif terhadap lokasi app.py (root repo).
+# ============================================================
+acs_pg = st.Page("acs_dashboard.py", title="ACS Climatology", icon="📊")
+meteogram_pg = st.Page("meteogram_dashboard.py", title="Meteogram Master", icon="📈")
+metar_pg = st.Page("metar_dashboard.py", title="METAR / TAF Tactical Ops", icon="📡")
+
+
+def render_home():
+    """Halaman Beranda U-AWIS — dibangun baru, tidak terkait file dashboard manapun."""
+    c = THEME[st.session_state.uawis_dark]
+
+    st.markdown(
+        f"""
+        <div style="background:{c['card']};border:1px solid {c['border']};
+                    border-radius:18px;padding:34px 30px;margin-bottom:22px;
+                    box-shadow:{c['shadow']};">
+            <h1 style="color:{c['text']};margin:0 0 6px 0;font-size:2.1rem;">
+                Selamat Datang di U-AWIS
+            </h1>
+            <p style="color:{c['muted']};font-size:1rem;max-width:780px;
+                       line-height:1.65;margin:0;">
+                <b>Unified Aviation Weather Information System</b> menghimpun tiga modul
+                analisis cuaca penerbangan ke dalam satu platform operasional: statistik
+                klimatologi lapangan (ACS), meteogram sinoptik multi-tahun, serta data
+                METAR/TAF taktis — untuk mendukung kesiapan pengambilan keputusan
+                penerbangan secara cepat dan terpadu.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-# Inject CSS dinamis berdasarkan mode yang dipilih
-if st.session_state.app_theme == "Light Mode":
-    st.markdown("""
-        <style>
-        /* BASE LAYER LIGHT MODE */
-        html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
-            background-color: #F8FAFC !important;
-            color: #0F172A !important;
-        }
-        [data-testid="stSidebar"] {
-            background-color: #F1F5F9 !important;
-        }
-        [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] p, [data-testid="stSidebar"] span, [data-testid="stSidebar"] label {
-            color: #0F172A !important;
-        }
-        h1, h2, h3, h4, h5, h6, .uawis-header h1 {
-            color: #1E3A8A !important;
-        }
-        .uawis-header {
-            background: linear-gradient(135deg, #E2E8F0 0%, #CBD5E1 100%) !important;
-            border-left: 6px solid #1E3A8A !important;
-        }
-        .module-card {
-            background-color: #FFFFFF !important;
-            border: 1px solid #CBD5E1 !important;
-        }
-        .module-card h3 { color: #B45309 !important; }
-        .module-card p { color: #475569 !important; }
-        
-        /* FIX VISIBILITAS DROPDOWN (ANTI-BLIND/TIDAK TERLIHAT) */
-        div[data-baseweb="select"] > div {
-            background-color: #FFFFFF !important;
-            color: #0F172A !important;
-            border: 1px solid #CBD5E1 !important;
-        }
-        div[data-baseweb="popover"], div[data-baseweb="popover"] ul {
-            background-color: #FFFFFF !important;
-        }
-        div[data-baseweb="popover"] li, div[data-baseweb="popover"] li span, div[data-baseweb="popover"] li p {
-            color: #0F172A !important;
-            background-color: transparent !important;
-        }
-        div[data-baseweb="popover"] li:hover, div[data-baseweb="popover"] li:hover span {
-            background-color: #E2E8F0 !important;
-            color: #1E3A8A !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-else:
-    st.markdown("""
-        <style>
-        /* BASE LAYER DARK MODE */
-        html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
-            background-color: #0b0c0c !important;
-            color: #cfd2c3 !important;
-        }
-        [data-testid="stSidebar"] {
-            background-color: #111111 !important;
-        }
-        h1, h2, h3, h4, h5, h6, .uawis-header h1 {
-            color: #a9df52 !important;
-        }
-        .uawis-header {
-            background: linear-gradient(135deg, #162A4A 0%, #0D1B2A 100%) !important;
-            border-left: 6px solid #00B4D8 !important;
-        }
-        
-        /* FIX VISIBILITAS DROPDOWN (ANTI-BLIND/TIDAK TERLIHAT) */
-        div[data-baseweb="select"] > div {
-            background-color: #1E293B !important;
-            color: #FFFFFF !important;
-            border: 1px solid #334155 !important;
-        }
-        div[data-baseweb="popover"], div[data-baseweb="popover"] ul {
-            background-color: #1E293B !important;
-        }
-        div[data-baseweb="popover"] li, div[data-baseweb="popover"] li span, div[data-baseweb="popover"] li p {
-            color: #FFFFFF !important;
-            background-color: transparent !important;
-        }
-        div[data-baseweb="popover"] li:hover, div[data-baseweb="popover"] li:hover span {
-            background-color: #334155 !important;
-            color: #00B4D8 !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
+    badges = [
+        ("🗓️", "Klimatologi 2021–2025", "6 parameter data ACS"),
+        ("📡", "METAR / TAF", "Data taktis per pangkalan"),
+        ("📈", "Meteogram", "Analisis multi-tahun & musiman"),
+    ]
+    for col, (icon, title, sub) in zip(st.columns(3), badges):
+        with col:
+            st.markdown(
+                f"""
+                <div style="background:{c['bg2']};border:1px solid {c['border']};
+                            border-radius:12px;padding:14px 12px;text-align:center;">
+                    <div style="font-size:1.4rem;">{icon}</div>
+                    <div style="color:{c['text']};font-weight:600;font-size:0.92rem;">
+                        {title}
+                    </div>
+                    <div style="color:{c['muted']};font-size:0.75rem;">{sub}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-# =====================================================================
-# 3. GLOBAL FIX: SMART SIDEBAR & ANTI-CLIPPING DROPDOWN
-# =====================================================================
-st.markdown("""
-    <style>
-    /* A. MEMBUAT TATA LETAK SIDEBAR MENJADI PADAT TAPI RAPI */
-    [data-testid="stSidebarUserContent"] {
-        padding-top: 1.5rem !important;
-        /* RUANG KOSONG TAK TERLIHAT (PHANTOM SPACE) */
-        /* Ini menjamin dropdown paling bawah tidak akan pernah menabrak tepi layar */
-        padding-bottom: 400px !important; 
-    }
-    
-    /* Mengatur jarak (gap) antar elemen agar tidak terlalu jauh */
-    [data-testid="stSidebar"] div[data-testid="stVerticalBlock"] {
-        gap: 0.5rem !important; 
-    }
-    [data-testid="stSidebar"] div[data-testid="stVerticalBlock"] > div {
-        padding-bottom: 0 !important;
-    }
-    
-    /* Merapatkan jarak batas garis horizontal (hr) */
-    [data-testid="stSidebar"] hr {
-        margin-top: 0.8rem !important;
-        margin-bottom: 0.8rem !important;
-    }
-    
-    /* B. PENGATURAN DROPDOWN POPOVER */
-    /* Kita kembalikan perilaku normal portal, hanya batasi tingginya agar rapi */
-    div[data-baseweb="popover"] ul, 
-    div[role="listbox"], 
-    ul[role="listbox"] {
-        max-height: 250px !important; 
-        overflow-y: auto !important;
-    }
-    </style>
-""", unsafe_allow_html=True)
+    st.write("")
+    st.markdown(f"<h3 style='color:{c['text']};'>Modul Operasional</h3>", unsafe_allow_html=True)
 
+    cards = [
+        (acs_pg, "📊", "ACS Climatology Statistics",
+         "Statistik klimatologi lapangan (Aerodrome Climatological Summary) periode "
+         "2021–2025: frekuensi & rata-rata suhu, kelembapan relatif, visibility, cloud "
+         "base, serta distribusi arah dan kecepatan angin — lengkap dengan interpretasi "
+         "operasional berbasis ICAO/WMO."),
+        (meteogram_pg, "📈", "Meteogram Master Dashboard",
+         "Meteogram sinoptik per jam dan per tahun untuk suhu, kelembapan, visibility, "
+         "cloud base (HS), dan wind rose musiman — dilengkapi mode tampilan gelap/terang "
+         "internal untuk analisis pola cuaca yang lebih mendalam."),
+        (metar_pg, "📡", "METAR / TAF Tactical Ops",
+         "Data METAR & TAF per pangkalan udara, decoding otomatis, unduh laporan PDF, "
+         "serta visualisasi windrose taktis bergaya ruang operasi untuk kesiapan misi "
+         "penerbangan."),
+    ]
 
-# =====================================================================
-# 4. SYSTEM HOMEPAGE RENDER (UI/UX OVERVIEW)
-# =====================================================================
-def render_home_page():
-    st.markdown("""
-        <style>
-        .uawis-header {
-            padding: 35px;
-            border-radius: 12px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-            margin-bottom: 35px;
-        }
-        .uawis-header h1 {
-            margin: 0;
-            font-size: 2.8rem;
-            font-family: 'Consolas', monospace;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-        }
-        .status-badge {
-            background-color: #059669;
-            color: white;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.8rem;
-            font-weight: bold;
-            vertical-align: middle;
-            margin-left: 10px;
-        }
-        .module-card {
-            padding: 25px;
-            border-radius: 10px;
-            border-top: 4px solid #F59E0B;
-            text-align: center;
-            height: 100%;
-            transition: transform 0.2s ease;
-        }
-        .module-card h3 { 
-            font-size: 1.4rem; 
-            margin-bottom: 15px;
-        }
-        .module-card p {
-            font-size: 0.95rem;
-            line-height: 1.5;
-            font-family: sans-serif;
-        }
-        </style>
-    """, unsafe_allow_html=True)
+    for col, (page_obj, icon, title, desc) in zip(st.columns(3), cards):
+        with col:
+            st.markdown(
+                f"""
+                <div style="background:{c['card']};border:1px solid {c['border']};
+                            border-radius:16px;padding:20px;min-height:230px;
+                            box-shadow:{c['shadow']};">
+                    <div style="font-size:1.7rem;">{icon}</div>
+                    <div style="color:{c['text']};font-weight:700;font-size:1.05rem;
+                                margin:6px 0 8px 0;">{title}</div>
+                    <div style="color:{c['muted']};font-size:0.85rem;line-height:1.55;">
+                        {desc}
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.page_link(page_obj, label=f"Buka {title}", icon="➡️", use_container_width=True)
 
-    st.markdown("""
-        <div class="uawis-header">
-            <h1>🌐 U-AWIS COMMAND CENTER</h1>
-            <p>Unified Aviation Weather Information System — Sistem Terpadu Pemantauan Meteorologi Penerbangan</p>
+    st.write("")
+    st.markdown(
+        f"""
+        <div style="text-align:center;color:{c['muted']};font-size:0.75rem;
+                    padding-top:12px;border-top:1px solid {c['border']};">
+            U-AWIS · Unified Aviation Weather Information System &nbsp;•&nbsp;
+            Dibangun di atas Streamlit &amp; Plotly &nbsp;•&nbsp; © 2026
         </div>
-    """, unsafe_allow_html=True)
+        """,
+        unsafe_allow_html=True,
+    )
 
-    st.markdown("### 📡 System Modules Status <span class='status-badge'>ONLINE</span>", unsafe_allow_html=True)
-    st.write("") 
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("""
-        <div class="module-card">
-            <h3>🛰️ Tactical METAR & TAF</h3>
-            <p>Sistem pemantauan cuaca taktis real-time. Menampilkan data observasi (METAR) dan prakiraan (TAF) untuk pangkalan TNI AU di seluruh wilayah Indonesia.</p>
+
+home_pg = st.Page(render_home, title="Beranda", icon="🏠", default=True)
+
+# ============================================================
+# 4) NAVIGASI — posisi "top" sengaja dipilih agar sidebar setiap
+#    dashboard (yang masing-masing sudah punya menu/filter sendiri)
+#    tetap bersih dan tidak berebut ruang dengan menu navigasi utama.
+# ============================================================
+pg = st.navigation([home_pg, acs_pg, meteogram_pg, metar_pg], position="top")
+
+# ---- Tag identitas ringkas di sidebar (tidak mengubah isi sidebar dashboard) ----
+with st.sidebar:
+    c = THEME[st.session_state.uawis_dark]
+    st.markdown(
+        f"""<div style="line-height:1.3;">
+            <span style="font-size:1.05rem;font-weight:700;">🛡️ U-AWIS</span><br>
+            <span style="font-size:0.72rem;color:{c['muted']};">
+                Unified Aviation Weather Information System
+            </span>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+    st.markdown("<hr style='margin:0.5rem 0 0.8rem 0;'>", unsafe_allow_html=True)
+
+# ---- Banner atas + saklar tema (tampil di semua halaman) ----
+c = THEME[st.session_state.uawis_dark]
+st.markdown(
+    f"""
+    <div style="background:linear-gradient(90deg,{c['bg2']} 0%,{c['card']} 100%);
+                border:1px solid {c['border']};border-radius:14px;
+                padding:14px 22px;margin-bottom:10px;box-shadow:{c['shadow']};">
+        <div style="display:flex;align-items:center;justify-content:space-between;
+                    flex-wrap:wrap;gap:8px;">
+            <div>
+                <span style="font-size:1.3rem;font-weight:700;color:{c['text']};
+                             letter-spacing:0.4px;">🛡️ U-AWIS</span>
+                <span style="font-size:0.8rem;color:{c['muted']};margin-left:10px;">
+                    Unified Aviation Weather Information System
+                </span>
+            </div>
+            <div style="font-size:0.7rem;color:{c['accent']};font-weight:700;
+                        letter-spacing:1px;text-transform:uppercase;">
+                Platform Cuaca Operasional Penerbangan
+            </div>
         </div>
-        """, unsafe_allow_html=True)
-
-    with col2:
-        st.markdown("""
-        <div class="module-card">
-            <h3>📊 Aviation Meteorology</h3>
-            <p>Sistem rekapitulasi histori cuaca. Menyajikan ringkasan kondisi aerodrome RSN berdasarkan pengolahan data ACS periode 2021 hingga 2025.</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col3:
-        st.markdown("""
-        <div class="module-card">
-            <h3>🌤️ Diurnal Patterns</h3>
-            <p>Sistem analisis meteorologi lanjutan. Memetakan pola diurnal aerodrome RSN dari data ACS 2021-2025 untuk mendukung perencanaan penerbangan.</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("---")
-    st.info("ℹ️ **Petunjuk Penggunaan:** Silakan buka menu navigasi (Sidebar) di sebelah kiri layar untuk memilih dan menjalankan spesifik modul dashboard.")
-    st.caption("U-AWIS Unified Platform © 2026")
-
-
-# =====================================================================
-# 5. REGISTRASI HALAMAN & RUN ROUTER NAVIGASI
-# =====================================================================
-page_home = st.Page(
-    render_home_page, 
-    title="U-AWIS Overview", 
-    icon="🏠", 
-    default=True
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
-page_metar = st.Page(
-    "metar_dashboard.py", 
-    title="Tactical METAR & TAF", 
-    icon="🛰️"
-)
+_, col_toggle = st.columns([6, 1])
+with col_toggle:
+    st.session_state.uawis_dark = st.toggle(
+        "🌙 Gelap",
+        value=st.session_state.uawis_dark,
+        help="Mode gelap/terang untuk Beranda & branding U-AWIS. "
+             "Meteogram punya saklar tema sendiri di sidebar-nya; "
+             "ACS dan METAR memakai tema tetap sesuai desain aslinya.",
+    )
 
-page_acs = st.Page(
-    "acs_dashboard.py", 
-    title="Aviation Meteorology", 
-    icon="📊"
-)
-
-page_diurnal = st.Page(
-    "meteogram_dashboard.py", 
-    title="Diurnal Patterns", 
-    icon="🌤️"
-)
-
-# Struktur Navigasi Utama dikelompokkan secara rapi
-pg = st.navigation({
-    "MAIN SYSTEM": [page_home],
-    "OPERATIONAL MODULES": [page_metar, page_acs, page_diurnal]
-})
-
-# Menjalankan router inti Streamlit
-pg.run()
+# ============================================================
+# 5) EKSEKUSI HALAMAN AKTIF
+#    Dibungkus try/except sebagai jaring pengaman tingkat-router
+#    (bukan pengganti error handling internal tiap dashboard,
+#    yang sudah masing-masing punya penanganannya sendiri).
+# ============================================================
+try:
+    pg.run()
+except Exception as e:
+    st.error("⚠️ Terjadi kendala saat memuat modul ini. Silakan kembali ke Beranda dan coba lagi.")
+    with st.expander("Detail teknis (untuk administrator)"):
+        st.exception(e)
+    st.page_link(home_pg, label="Kembali ke Beranda", icon="🏠")
