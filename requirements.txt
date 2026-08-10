@@ -1,6 +1,5 @@
 # ── U-AWIS · requirements (Streamlit Community Cloud) ─────────────
-# Version floor dipasang hanya pada yang kritis agar deploy stabil &
-# tahan banting, sisanya dibiarkan mengikuti rilis terbaru.
+# Version floor hanya pada yang kritis agar deploy stabil & tahan banting.
 
 streamlit>=1.40          # butuh st.navigation() / st.Page() (multipage modern)
 pandas>=2.0
