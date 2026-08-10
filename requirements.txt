@@ -1,9 +1,13 @@
-streamlit
-requests
-urllib3
-fpdf2
-beautifulsoup4
-pandas
-plotly
-numpy
-openpyxl
+# ── U-AWIS · requirements (Streamlit Community Cloud) ─────────────
+# Version floor dipasang hanya pada yang kritis agar deploy stabil &
+# tahan banting, sisanya dibiarkan mengikuti rilis terbaru.
+
+streamlit>=1.40          # butuh st.navigation() / st.Page() (multipage modern)
+pandas>=2.0
+numpy>=1.24
+plotly>=5.20
+requests>=2.31
+urllib3>=2.0             # dipakai: from urllib3.util import Retry
+beautifulsoup4>=4.12     # modul import: bs4
+fpdf2>=2.7               # modul import: fpdf  (JANGAN tambah paket 'fpdf' lama)
+openpyxl>=3.1            # engine baca .xlsx untuk pandas.read_excel
