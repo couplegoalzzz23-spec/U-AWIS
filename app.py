@@ -627,3 +627,4 @@ except Exception as e:
 _css = theme_css_for(active)
 if _css:
     st.markdown(_css, unsafe_allow_html=True)
+    
