@@ -569,7 +569,7 @@ with st.sidebar:
     st.markdown(
         f"""<div style="font-size:.68rem;opacity:.8;line-height:1.5;">
                 <b>{T('unit_name')}</b><br>{T('unit_role')}<br>
-                Build {datetime.now(timezone.utc):%Y.%m.%d} · v3.0
+                Build {datetime.now(timezone.utc):%Y.%m.%d} · v3.1
             </div>""",
         unsafe_allow_html=True,
     )
