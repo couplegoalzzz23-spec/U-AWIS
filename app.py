@@ -41,8 +41,69 @@ Struktur repo (flat) — TIDAK perlu membuat folder apa pun:
 
 from datetime import datetime, timezone
 
+import requests as _requests
 import streamlit as st
 import streamlit.components.v1 as components
+
+# ============================================================
+# 0) NETWORK SHIM — perbaiki 403 BMKG TANPA mengedit dashboard.
+# ------------------------------------------------------------
+# Sebagian fetch di metar_dashboard.py (mis. fetch_forecast pada
+# tab "BMKG Tactical Forecast") memanggil requests.get TANPA header
+# User-Agent. Server BMKG (cuaca.bmkg.go.id) menolak User-Agent
+# default "python-requests/x.y" dengan 403 Forbidden.
+#
+# Kita tambal SATU titik: requests.Session.request (choke point untuk
+# semua requests.get / session.get). Bila sebuah request belum memiliki
+# User-Agent (atau masih memakai UA default python-requests), kita
+# suntikkan UA browser + Accept standar. Header eksplisit yang sudah
+# diset dashboard (mis. 'Mozilla/5.0 OperationalWeatherClient') TIDAK
+# diubah. Idempoten, aman untuk semua modul, dan tidak menyentuh file.
+# ============================================================
+_UAWIS_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/125.0.0.0 Safari/537.36"
+)
+
+
+def _install_ua_shim() -> None:
+    sess_cls = _requests.sessions.Session
+    if getattr(sess_cls, "_uawis_ua_patched", False):
+        return
+    _orig_request = sess_cls.request
+
+    def _request(self, method, url, **kwargs):
+        # Header efektif = default session + header per-panggilan
+        eff = {}
+        try:
+            for k, v in (self.headers or {}).items():
+                eff[str(k).lower()] = v
+        except Exception:
+            pass
+        percall = kwargs.get("headers") or {}
+        try:
+            for k, v in percall.items():
+                eff[str(k).lower()] = v
+        except Exception:
+            pass
+
+        ua = str(eff.get("user-agent", ""))
+        if (not ua) or ("python-requests" in ua.lower()):
+            merged = dict(percall)
+            merged["User-Agent"] = _UAWIS_UA
+            if "accept" not in eff:
+                merged["Accept"] = "application/json, text/plain, */*"
+            if "accept-language" not in eff:
+                merged["Accept-Language"] = "id-ID,id;q=0.9,en;q=0.8"
+            kwargs["headers"] = merged
+        return _orig_request(self, method, url, **kwargs)
+
+    sess_cls.request = _request
+    sess_cls._uawis_ua_patched = True
+
+
+_install_ua_shim()
 
 # ============================================================
 # 1) KONFIGURASI DASAR — WAJIB perintah Streamlit PERTAMA.
