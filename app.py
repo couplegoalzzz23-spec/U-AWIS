@@ -48,33 +48,56 @@ import streamlit.components.v1 as components
 # ============================================================
 # 0) NETWORK SHIM — perbaiki 403 BMKG TANPA mengedit dashboard.
 # ------------------------------------------------------------
-# Sebagian fetch di metar_dashboard.py (mis. fetch_forecast pada
-# tab "BMKG Tactical Forecast") memanggil requests.get TANPA header
-# User-Agent. Server BMKG (cuaca.bmkg.go.id) menolak User-Agent
-# default "python-requests/x.y" dengan 403 Forbidden.
+# Tab "BMKG Tactical Forecast" (fetch_forecast di metar_dashboard.py)
+# memanggil endpoint INTERNAL frontend BMKG:
+#     https://cuaca.bmkg.go.id/api/df/v1/forecast/adm?adm1=XX
+# Endpoint itu berada di balik proteksi WAF sehingga MENOLAK akses
+# server-side (403 Forbidden) — bahkan dengan User-Agent browser.
 #
-# Kita tambal SATU titik: requests.Session.request (choke point untuk
-# semua requests.get / session.get). Bila sebuah request belum memiliki
-# User-Agent (atau masih memakai UA default python-requests), kita
-# suntikkan UA browser + Accept standar. Header eksplisit yang sudah
-# diset dashboard (mis. 'Mozilla/5.0 OperationalWeatherClient') TIDAK
-# diubah. Idempoten, aman untuk semua modul, dan tidak menyentuh file.
+# BMKG menyediakan API PUBLIK RESMI dengan struktur JSON IDENTIK
+# (data[].lokasi + data[].cuaca[][]) dan parameter adm1 yang sama:
+#     https://api.bmkg.go.id/publik/prakiraan-cuaca?adm1=XX
+#
+# Shim ini menambal SATU titik (requests.Session.request) untuk:
+#   (1) mengALIHKAN request forecast internal → API publik resmi, dan
+#   (2) menyuntik User-Agent browser bila request belum punya.
+# Field turunan (mis. ws_kt) tetap dihitung oleh dashboard dari `ws`,
+# jadi tidak ada fungsi yang berubah. Header eksplisit milik dashboard
+# TIDAK diubah. Idempoten, aman untuk semua modul, tanpa edit file.
 # ============================================================
 _UAWIS_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/125.0.0.0 Safari/537.36"
 )
+_BMKG_PUBLIC_FORECAST = "https://api.bmkg.go.id/publik/prakiraan-cuaca"
 
 
-def _install_ua_shim() -> None:
+def _reroute_bmkg(url: str) -> str:
+    """cuaca.bmkg.go.id/.../forecast/... (WAF 403) → API publik resmi BMKG.
+    Query string asli (mis. ?adm1=14) tetap dibawa; params kwargs juga tetap
+    berlaku karena requests menggabungkan keduanya."""
+    try:
+        u = str(url)
+    except Exception:
+        return url
+    if ("cuaca.bmkg.go.id" in u) and ("forecast" in u):
+        query = u.split("?", 1)[1] if "?" in u else ""
+        return _BMKG_PUBLIC_FORECAST + (("?" + query) if query else "")
+    return url
+
+
+def _install_network_shim() -> None:
     sess_cls = _requests.sessions.Session
-    if getattr(sess_cls, "_uawis_ua_patched", False):
+    if getattr(sess_cls, "_uawis_net_patched", False):
         return
     _orig_request = sess_cls.request
 
     def _request(self, method, url, **kwargs):
-        # Header efektif = default session + header per-panggilan
+        # (1) Reroute endpoint forecast internal BMKG → API publik resmi.
+        url = _reroute_bmkg(url)
+
+        # (2) Suntik User-Agent browser bila belum ada / masih default.
         eff = {}
         try:
             for k, v in (self.headers or {}).items():
@@ -87,7 +110,6 @@ def _install_ua_shim() -> None:
                 eff[str(k).lower()] = v
         except Exception:
             pass
-
         ua = str(eff.get("user-agent", ""))
         if (not ua) or ("python-requests" in ua.lower()):
             merged = dict(percall)
@@ -97,13 +119,14 @@ def _install_ua_shim() -> None:
             if "accept-language" not in eff:
                 merged["Accept-Language"] = "id-ID,id;q=0.9,en;q=0.8"
             kwargs["headers"] = merged
+
         return _orig_request(self, method, url, **kwargs)
 
     sess_cls.request = _request
-    sess_cls._uawis_ua_patched = True
+    sess_cls._uawis_net_patched = True
 
 
-_install_ua_shim()
+_install_network_shim()
 
 # ============================================================
 # 1) KONFIGURASI DASAR — WAJIB perintah Streamlit PERTAMA.
