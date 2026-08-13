@@ -46,24 +46,29 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 # ============================================================
-# 0) NETWORK SHIM — perbaiki 403 BMKG TANPA mengedit dashboard.
+# 0) NETWORK SHIM — perbaiki error BMKG TANPA mengedit dashboard.
 # ------------------------------------------------------------
-# Tab "BMKG Tactical Forecast" (fetch_forecast di metar_dashboard.py)
-# memanggil endpoint INTERNAL frontend BMKG:
-#     https://cuaca.bmkg.go.id/api/df/v1/forecast/adm?adm1=XX
-# Endpoint itu berada di balik proteksi WAF sehingga MENOLAK akses
-# server-side (403 Forbidden) — bahkan dengan User-Agent browser.
+# Tab "BMKG Tactical Forecast" (fetch_forecast) memanggil endpoint
+# INTERNAL frontend BMKG:  cuaca.bmkg.go.id/api/df/v1/forecast/adm?adm1=XX
+#   • Endpoint itu di balik WAF → 403 Forbidden untuk akses server-side.
+#   • API PUBLIK RESMI (api.bmkg.go.id/publik/prakiraan-cuaca) memakai
+#     struktur JSON IDENTIK, TAPI (per dokumentasi resmi BMKG) hanya
+#     melayani level adm4 (kelurahan/desa) — query adm1 balas kosong,
+#     sehingga resp.json() gagal ("Expecting value: line 1 column 1").
 #
-# BMKG menyediakan API PUBLIK RESMI dengan struktur JSON IDENTIK
-# (data[].lokasi + data[].cuaca[][]) dan parameter adm1 yang sama:
-#     https://api.bmkg.go.id/publik/prakiraan-cuaca?adm1=XX
+# SOLUSI: shim ini menambal requests.Session.request untuk:
+#   (1) mengalihkan panggilan forecast → API publik resmi, dan
+#   (2) menerjemahkan adm1 (provinsi) → adm4 (ibukota/kota Lanud provinsi
+#       tsb) memakai kode wilayah resmi Kemendagri, agar API balas JSON
+#       valid. Dashboard menampilkan prakiraan lokasi representatif itu.
+#   (3) menyuntik User-Agent browser bila request belum punya.
+# Field turunan (mis. ws_kt) tetap dihitung dashboard dari `ws`. Header
+# eksplisit dashboard tidak diubah. Idempoten, tanpa mengedit file mana pun.
 #
-# Shim ini menambal SATU titik (requests.Session.request) untuk:
-#   (1) mengALIHKAN request forecast internal → API publik resmi, dan
-#   (2) menyuntik User-Agent browser bila request belum punya.
-# Field turunan (mis. ws_kt) tetap dihitung oleh dashboard dari `ws`,
-# jadi tidak ada fungsi yang berubah. Header eksplisit milik dashboard
-# TIDAK diubah. Idempoten, aman untuk semua modul, tanpa edit file.
+# Catatan: API publik BMKG tidak menyediakan agregasi se-provinsi seperti
+# endpoint internal lama, jadi tiap provinsi diwakili prakiraan ibukotanya
+# (Riau → Pekanbaru, dst). Provinsi baru Papua (93–96) belum ada di basis
+# kode → fallback aman (dashboard tampil peringatan, bukan error).
 # ============================================================
 _UAWIS_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -72,19 +77,58 @@ _UAWIS_UA = (
 )
 _BMKG_PUBLIC_FORECAST = "https://api.bmkg.go.id/publik/prakiraan-cuaca"
 
+# adm1 (kode provinsi BPS) → adm4 representatif (ibukota/kota Lanud).
+# Kode diambil dari basis wilayah resmi Kemendagri (Permendagri 72/2019).
+_ADM1_TO_ADM4 = {
+    "11": "11.71.01.2001", "12": "12.71.01.1001", "13": "13.71.01.1001",
+    "14": "14.71.01.1002", "15": "15.71.01.1001", "16": "16.71.01.1001",
+    "17": "17.71.01.1001", "18": "18.71.01.1003", "19": "19.71.01.1004",
+    "21": "21.71.01.1002", "31": "31.71.01.1001", "32": "32.73.01.1001",
+    "33": "33.74.01.1001", "34": "34.71.01.1001", "35": "35.78.01.1001",
+    "36": "36.73.01.1001", "51": "51.71.01.1001", "52": "52.71.01.1004",
+    "53": "53.71.01.1001", "61": "61.71.01.1002", "62": "62.71.01.1001",
+    "63": "63.71.01.1001", "64": "64.72.01.1001", "65": "65.71.01.1001",
+    "71": "71.71.01.1001", "72": "72.71.01.1004", "73": "73.71.01.1001",
+    "74": "74.71.01.1005", "75": "75.71.01.1001", "76": "76.01.01.2003",
+    "81": "81.71.01.2001", "82": "82.71.01.1001", "91": "91.71.01.1001",
+    "92": "92.71.01.1001",
+}
 
-def _reroute_bmkg(url: str) -> str:
-    """cuaca.bmkg.go.id/.../forecast/... (WAF 403) → API publik resmi BMKG.
-    Query string asli (mis. ?adm1=14) tetap dibawa; params kwargs juga tetap
-    berlaku karena requests menggabungkan keduanya."""
+
+def _extract_adm1(url_str: str, params) -> str:
+    """Ambil nilai adm1 dari params (dict) atau dari query string URL."""
+    if isinstance(params, dict):
+        for k, v in params.items():
+            if str(k).lower() == "adm1" and v not in (None, ""):
+                return str(v)
+    try:
+        import re
+        m = re.search(r"[?&]adm1=([0-9]+)", url_str)
+        if m:
+            return m.group(1)
+    except Exception:
+        pass
+    return ""
+
+
+def _maybe_reroute_forecast(url, kwargs):
+    """cuaca.bmkg.go.id/.../forecast (WAF/403) → API publik resmi (adm4)."""
     try:
         u = str(url)
     except Exception:
-        return url
-    if ("cuaca.bmkg.go.id" in u) and ("forecast" in u):
-        query = u.split("?", 1)[1] if "?" in u else ""
-        return _BMKG_PUBLIC_FORECAST + (("?" + query) if query else "")
-    return url
+        return url, kwargs
+    if not (("cuaca.bmkg.go.id" in u) and ("forecast" in u)):
+        return url, kwargs
+
+    adm1 = _extract_adm1(u, kwargs.get("params"))
+    adm4 = _ADM1_TO_ADM4.get(adm1)
+
+    new_kwargs = dict(kwargs)
+    if adm4:
+        new_kwargs["params"] = {"adm4": adm4}      # level yang pasti dilayani
+    elif adm1:
+        new_kwargs["params"] = {"adm1": adm1}      # fallback (bisa kosong → warning)
+    return _BMKG_PUBLIC_FORECAST, new_kwargs
 
 
 def _install_network_shim() -> None:
@@ -94,8 +138,8 @@ def _install_network_shim() -> None:
     _orig_request = sess_cls.request
 
     def _request(self, method, url, **kwargs):
-        # (1) Reroute endpoint forecast internal BMKG → API publik resmi.
-        url = _reroute_bmkg(url)
+        # (1) Reroute + terjemahkan adm1 → adm4 untuk endpoint forecast BMKG.
+        url, kwargs = _maybe_reroute_forecast(url, kwargs)
 
         # (2) Suntik User-Agent browser bila belum ada / masih default.
         eff = {}
