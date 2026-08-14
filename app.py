@@ -40,6 +40,9 @@ Struktur repo (flat) — TIDAK perlu membuat folder apa pun:
 """
 
 from datetime import datetime, timezone
+import base64
+from io import BytesIO
+from pathlib import Path
 
 import requests as _requests
 import streamlit as st
@@ -437,21 +440,82 @@ def tactical_status_bar(c: dict) -> None:
 
 
 # ============================================================
+# 5b) ASET DEKORATIF — pemuat aman (hero_runway / fighter_left).
+# ------------------------------------------------------------
+# Aset OPSIONAL murni visual. Aturan wajib brief: kegagalan aset
+# TIDAK BOLEH mematikan dashboard. Maka:
+#   • Path relatif via Path(__file__) → aman di Streamlit Cloud
+#     (tanpa path Windows lokal).
+#   • Bila Pillow tersedia → perkecil+kompres JPEG (hemat bandwidth,
+#     hindari embed PNG 1.5–2.1MB tiap rerun).
+#   • try/except berlapis → gagal apa pun mengembalikan None, dan
+#     Beranda otomatis pakai gradient lama (identik desain semula).
+#   • @st.cache_data → hanya sekali baca/encode, tidak membebani rerun.
+# File PNG asli TIDAK diubah/dipindah/dihapus (diperlakukan read-only).
+# ============================================================
+_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+
+
+@st.cache_data(show_spinner=False)
+def _asset_data_uri(filename, max_w=1600, quality=72):
+    """Kembalikan data-URI aset dekoratif, atau None bila tak tersedia/gagal."""
+    try:
+        p = _ASSETS_DIR / filename
+        if not p.is_file():
+            return None
+        raw = p.read_bytes()
+        try:
+            from PIL import Image  # sudah tersedia di lingkungan Streamlit
+            im = Image.open(BytesIO(raw)).convert("RGB")
+            if im.width > max_w:
+                ratio = max_w / float(im.width)
+                im = im.resize((max_w, max(1, int(im.height * ratio))))
+            buf = BytesIO()
+            im.save(buf, format="JPEG", quality=quality, optimize=True)
+            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            return f"data:image/jpeg;base64,{b64}"
+        except Exception:
+            # Fallback: pakai byte PNG asli apa adanya (tetap tampil).
+            b64 = base64.b64encode(raw).decode("ascii")
+            return f"data:image/png;base64,{b64}"
+    except Exception:
+        return None
+
+
+# ============================================================
 # 6) HALAMAN BERANDA — dibangun mandiri (tidak terkait dashboard).
 # ============================================================
 def render_home():
     dark = st.session_state.uawis_dark
     c = palette(dark)
 
+    # --- Aset dekoratif (opsional, aman gagal → fallback gradient lama) ---
+    hero_uri = _asset_data_uri("hero_runway.png", max_w=1600, quality=72)
+    jet_uri = _asset_data_uri("fighter_left.png", max_w=900, quality=70)
+    if hero_uri:
+        # Overlay navy tebal DI ATAS foto runway → judul tetap terbaca &
+        # identitas navy lama dipertahankan (baseline tetap dikenali).
+        hero_bg = (f"linear-gradient(135deg,{c['heroA']}f2 0%,{c['heroB']}d9 55%,"
+                   f"{c['heroB']}f5 100%), url('{hero_uri}')")
+    else:
+        hero_bg = f"linear-gradient(135deg,{c['heroA']} 0%,{c['heroB']} 100%)"
+    jet_html = f'<img class="uawis-jet" src="{jet_uri}" alt="">' if jet_uri else ""
+
     st.markdown(
         f"""
         <style>
-          .uawis-hero {{ background:linear-gradient(135deg,{c['heroA']} 0%,{c['heroB']} 100%);
-              border:1px solid {c['border']};border-radius:20px;padding:32px 30px;
-              box-shadow:{c['shadow']};position:relative;overflow:hidden;}}
+          .uawis-hero {{ background:{hero_bg};background-size:cover;
+              background-position:center;border:1px solid {c['border']};
+              border-radius:20px;padding:30px 30px;box-shadow:{c['shadow']};
+              position:relative;overflow:hidden;}}
           .uawis-hero::after {{ content:"";position:absolute;right:-40px;top:-40px;
-              width:220px;height:220px;border-radius:50%;
+              width:220px;height:220px;border-radius:50%;z-index:1;
               background:radial-gradient(circle,{c['gold']}22 0%,transparent 70%);}}
+          .uawis-jet {{ position:absolute;right:0;bottom:0;height:120%;
+              object-fit:cover;object-position:left center;opacity:.16;z-index:0;
+              pointer-events:none;-webkit-mask-image:linear-gradient(90deg,transparent 0%,#000 62%);
+              mask-image:linear-gradient(90deg,transparent 0%,#000 62%);}}
+          .uawis-hero > *:not(.uawis-jet) {{ position:relative;z-index:2;}}
           .uawis-kicker {{ display:inline-block;font-size:.66rem;letter-spacing:2px;
               font-weight:800;text-transform:uppercase;color:{c['gold']};
               border:1px solid {c['gold']}66;border-radius:999px;padding:4px 12px;
@@ -466,9 +530,13 @@ def render_home():
               padding:2px 10px;}}
           .uawis-card {{ background:{c['card']};border:1px solid {c['border']};
               border-top:3px solid {c['gold']};border-radius:16px;padding:20px 18px 14px 18px;
-              min-height:224px;box-shadow:{c['shadow']};transition:transform .18s ease,
-              border-color .18s ease;}}
-          .uawis-card:hover {{ transform:translateY(-4px);border-color:{c['gold']};}}
+              min-height:224px;box-shadow:{c['shadow']};position:relative;overflow:hidden;
+              transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease;}}
+          .uawis-card::before {{ content:"";position:absolute;top:10px;right:10px;
+              width:14px;height:14px;border-top:2px solid {c['steel']};
+              border-right:2px solid {c['steel']};opacity:.55;}}
+          .uawis-card:hover {{ transform:translateY(-4px);border-color:{c['gold']};
+              box-shadow:0 18px 40px rgba(0,0,0,.28);}}
           .uawis-card .cic {{ font-size:1.7rem;}}
           .uawis-card .ctt {{ color:{c['text']};font-weight:800;font-size:1.05rem;
               margin:8px 0 8px 0;}}
@@ -492,6 +560,7 @@ def render_home():
     st.markdown(
         f"""
         <div class="uawis-hero">
+            {jet_html}
             <span class="uawis-kicker">{T('kicker')}</span>
             <div class="uawis-title">🛡️ U-AWIS COMMAND CENTER</div>
             <p class="uawis-sub">{T('hero_sub')}</p>
@@ -627,4 +696,3 @@ except Exception as e:
 _css = theme_css_for(active)
 if _css:
     st.markdown(_css, unsafe_allow_html=True)
-    
